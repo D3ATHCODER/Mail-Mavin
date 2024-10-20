@@ -1,0 +1,79 @@
+import os
+import pickle
+import email
+from email.header import decode_header
+from twilio.rest import Client
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+
+# Constants
+TWILIO_ACCOUNT_SID = "ENTER YOUR SID"
+TWILIO_AUTH_TOKEN = "ENTER YOUT AUTH TOKEN"
+TWILIO_WHATSAPP_NUMBER = "whatsapp:+YOUR TWILIO NUMBER"
+YOUR_WHATSAPP_NUMBER = "whatsapp:+910000000000"
+SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+
+def authenticate_gmail():
+    """Authenticate to Gmail API and return credentials."""
+    creds = None
+    if os.path.exists('token.json'):
+        with open('token.json', 'rb') as token:
+            creds = pickle.load(token)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=8080)
+        with open('token.json', 'wb') as token:
+            pickle.dump(creds, token)
+
+    return creds
+
+def fetch_emails(creds):
+    """Fetch unread emails using the Gmail API and summarize them."""
+    try:
+        service = build('gmail', 'v1', credentials=creds)
+        results = service.users().messages().list(userId='me', labelIds=['INBOX'], q="is:unread").execute()
+        messages = results.get('messages', [])
+
+        if not messages:
+            return "No new emails to summarize."
+
+        summaries = []
+        for msg in messages[:5]:  # Process up to 5 unread emails
+            msg_data = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
+            for header in msg_data['payload']['headers']:
+                if header['name'] == 'Subject':
+                    summaries.append(f"Email Subject: {header['value']}")
+
+        return "\n".join(summaries)
+
+    except Exception as e:
+        print(f"An error occurred while fetching emails: {e}")
+        return None
+
+def send_whatsapp_message(summary):
+    """Send a WhatsApp message with the provided summary."""
+    try:
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        message = client.messages.create(
+            from_=TWILIO_WHATSAPP_NUMBER,
+            body=summary,
+            to=YOUR_WHATSAPP_NUMBER
+        )
+        print(f"Message sent with SID: {message.sid}")
+
+    except Exception as e:
+        print(f"An error occurred while sending WhatsApp message: {e}")
+
+if __name__ == "__main__":
+    # Authenticate and fetch emails
+    creds = authenticate_gmail()
+    email_summary = fetch_emails(creds)
+    if email_summary:
+        send_whatsapp_message(email_summary)
+    else:
+        print("No new emails to summarize.")
